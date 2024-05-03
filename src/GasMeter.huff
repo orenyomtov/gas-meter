@@ -1,0 +1,138 @@
+#define function meterStaticCall(address,bytes) view returns (uint256,bytes)
+#define function meterCall(address,bytes) payable returns (uint256,bytes)
+#define constant JUMP_OFFSET = 0x1d8 
+
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    jumpdest
+
+    // Identify which function is being called.
+    0x00 calldataload 0xE0 shr          // [func_sig]
+
+    dup1 __FUNC_SIG(meterStaticCall)             eq RELATIVE_JUMPI(meterStaticCallJump)
+    dup1 __FUNC_SIG(meterCall)                   eq RELATIVE_JUMPI(meterCallJump)
+
+    // Revert if no match is found.
+    0x00 dup1 revert
+
+    meterStaticCallJump:
+        METER_STATIC_CALL()
+    meterCallJump:
+        METER_CALL()
+}
+
+#define macro RELATIVE_JUMPI(jump_dest) = takes (0) returns (0) {
+    <jump_dest> [JUMP_OFFSET] add jumpi
+}
+
+#define macro METER_STATIC_CALL() = takes (0) returns (0) {
+    // copy calldata to memory
+    calldatasize 0x04 0x0 calldatacopy
+
+    // warm the address
+    0x0 mload      // [addr]
+    balance        // [balance]
+    pop
+
+    // make staticcall
+    gas            // [gas_before]
+    0x00           // [ret_size, gas_before]
+    0x00           // [ret_offset, ret_size, gas_before]
+    0x40 mload     // [args_size, ret_offset, ret_size, gas_before]
+    0x60           // [args_offset, args_size, ret_offset, ret_size, gas_before]
+    0x0 mload      // [addr, args_offset, args_size, ret_offset, ret_size, gas_before]
+    gas            // [gas, addr, args_offset, args_size, ret_offset, ret_size, gas_before]
+    staticcall     // [successs, gas_before]
+    swap1          // [gas_before, success]
+    gas            // [gas_after, gas_before, success]
+    0x80 add       // [gas_cost, success]
+    swap1 sub      // [gas_cost, success]
+    
+    
+    // store gas_cost in memory
+    0x0 mstore     // [success]
+
+    // store returndata in memory
+    returndatasize // [returndatasize, success]
+    0x00           // [mem_offset, returndatasize, success]
+    0x60           // [destOffset, mem_offset, returndatasize, success]
+    returndatacopy // [success] // this stores the return data in memory
+    
+    RELATIVE_JUMPI(success)
+
+    // revert on failure
+    returndatasize // [returndatasize]
+    0x60           // [mem_offset, returndatasize]
+    revert         // [gas_cost]
+
+    success:
+
+    // store the return data offset in memory
+    0x40 0x20 mstore
+    // store the return data size in memory
+    returndatasize 0x40 mstore
+
+    // return the gas cost along with the return data
+    returndatasize // [returndatasize]
+    0x60           // [additional_size, returndatasize]
+    add            // [ret_size]
+    0x00           // [mem_offset, returndatasize]
+    return
+}
+
+#define macro METER_CALL() = takes (0) returns (0) {
+    // copy calldata to memory
+    calldatasize 0x04 0x0 calldatacopy
+
+    // warm the address
+    0x0 mload      // [addr]
+    balance        // [balance]
+    pop
+
+    // make call
+    gas            // [gas_before]
+    0x00           // [ret_size, gas_before]
+    0x00           // [ret_offset, ret_size, gas_before]
+    0x40 mload     // [args_size, ret_offset, ret_size, gas_before]
+    0x60           // [args_offset, args_size, ret_offset, ret_size, gas_before]
+    callvalue      // [value, args_offset, args_size, ret_offset, ret_size, gas_before]
+    0x0 mload      // [addr, value, args_offset, args_size, ret_offset, ret_size, gas_before]
+    gas            // [gas, value, addr, args_offset, args_size, ret_offset, ret_size, gas_before]
+    call           // [successs, gas_before]
+    swap1          // [gas_before, success]
+    gas            // [gas_after, gas_before, success]
+    0x82 add       // [gas_cost, success]
+    swap1 sub      // [gas_cost, success]
+    
+    
+    // store gas_cost in memory
+    0x0 mstore     // [success]
+
+    // store returndata in memory
+    returndatasize // [returndatasize, success]
+    0x00           // [mem_offset, returndatasize, success]
+    0x60           // [destOffset, mem_offset, returndatasize, success]
+    returndatacopy // [success] // this stores the return data in memory
+    
+    RELATIVE_JUMPI(success)
+
+    // revert on failure
+    returndatasize // [returndatasize]
+    0x60           // [mem_offset, returndatasize]
+    revert         // [gas_cost]
+
+    success:
+
+    // store the return data offset in memory
+    0x40 0x20 mstore
+    // store the return data size in memory
+    returndatasize 0x40 mstore
+
+    // return the gas cost along with the return data
+    returndatasize // [returndatasize]
+    0x60           // [additional_size, returndatasize]
+    add            // [ret_size]
+    0x00           // [mem_offset, returndatasize]
+    return
+}
